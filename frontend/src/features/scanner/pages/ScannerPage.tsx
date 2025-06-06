@@ -1,6 +1,8 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+const API_URL = import.meta.env.VITE_API_URL;
+
 interface ScanResult {
   productId: string;
   name: string;
@@ -102,7 +104,7 @@ const ScannerPage: React.FC = () => {
 
     try {
       setState({ status: 'scanning' });
-      const response = await fetch('http://localhost:3000/api/scan', {
+      const response = await fetch(`${API_URL}/scan`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
