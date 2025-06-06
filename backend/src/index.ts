@@ -21,12 +21,10 @@ app.get('/', (_req: Request, res: Response) => {
   res.send('Vision Stock API');
 });
 
-// Solo iniciar el servidor si no estamos en Vercel
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-  });
-}
+// Iniciar el servidor en todos los entornos
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
 
-// Exportar la app para Vercel
+// Exportar la app para compatibilidad con diferentes plataformas
 export default app;
