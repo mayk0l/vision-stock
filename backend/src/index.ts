@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import scannerRoutes from './routes/scanner.routes';
@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 3000;
 // Routes
 app.use('/api', scannerRoutes);
 
-app.get('/', (_req, res) => {
+app.get('/', (_req: Request, res: Response) => {
   res.send('Vision Stock API');
 });
 
