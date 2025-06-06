@@ -1,7 +1,10 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import * as tf from '@tensorflow/tfjs';
+import * as tmImage from '@teachablemachine/image';
 
 const API_URL = import.meta.env.VITE_API_URL;
+const MODEL_URL = '/model/model.json';
 
 interface ScanResult {
   productId: string;
@@ -10,35 +13,65 @@ interface ScanResult {
 }
 
 interface ScannerState {
-  status: 'idle' | 'requesting' | 'active' | 'error' | 'scanning';
+  status: 'idle' | 'loading' | 'requesting' | 'active' | 'error' | 'scanning';
   error?: string;
 }
+
+// Mapeo de clases a nombres de productos
+const productClasses: Record<string, string> = {
+  'Class 1': 'Lisoform',
+  'Class 2': 'Lemon Stones'
+};
 
 const ScannerPage: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const modelRef = useRef<tmImage.CustomMobileNet | null>(null);
   const [state, setState] = useState<ScannerState>({ status: 'idle' });
   const [result, setResult] = useState<ScanResult | null>(null);
   const [isIOS, setIsIOS] = useState<boolean>(false);
   const navigate = useNavigate();
+
+  // Cargar el modelo
+  const loadModel = async () => {
+    try {
+      setState({ status: 'loading' });
+      const model = await tmImage.load(MODEL_URL, '/model/metadata.json');
+      modelRef.current = model;
+      setState({ status: 'idle' });
+    } catch (error) {
+      console.error('Error al cargar el modelo:', error);
+      setState({ 
+        status: 'error', 
+        error: 'Error al cargar el modelo de reconocimiento.' 
+      });
+    }
+  };
 
   // Detectar iOS
   useEffect(() => {
     const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     setIsIOS(isIOSDevice);
+    
+    // Cargar el modelo al montar el componente
+    loadModel();
+
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
   }, []);
 
   // Inicializar la cámara
   const initializeCamera = async () => {
-    setState({ status: 'requesting' });    try {
-      // Constraints específicos basados en el dispositivo
+    setState({ status: 'requesting' });
+    try {
       const constraints: MediaStreamConstraints = {
         video: isIOS ? {
-          // iOS: mantener constraints simples
           facingMode: 'environment'
         } : {
-          // Otros navegadores: podemos usar más opciones
           facingMode: 'environment',
           width: { ideal: 1280 },
           height: { ideal: 720 }
@@ -50,22 +83,18 @@ const ScannerPage: React.FC = () => {
       streamRef.current = stream;
 
       if (videoRef.current) {
-        // En iOS, configurar los atributos antes del stream es crucial
         if (isIOS) {
           videoRef.current.setAttribute('playsinline', '');
           videoRef.current.setAttribute('webkit-playsinline', 'true');
         }
         
-        // Safari iOS: Asignar stream después de configurar atributos
         videoRef.current.srcObject = stream;
 
-        // Safari iOS: Esperar metadata y manejar play() adecuadamente
         await new Promise<void>((resolve, reject) => {
           if (!videoRef.current) return reject();
 
           const loadedMetadata = () => {
             videoRef.current?.removeEventListener('loadedmetadata', loadedMetadata);
-            // Safari iOS: Manejar la promesa de play() explícitamente
             videoRef.current?.play()
               .then(() => resolve())
               .catch((error) => {
@@ -88,36 +117,33 @@ const ScannerPage: React.FC = () => {
     }
   };
 
-  // Capturar frame y enviar al backend
-  const captureFrame = async () => {
-    if (!videoRef.current || state.status !== 'active') return;
-
-    const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
-    const ctx = canvas.getContext('2d');
-    
-    if (!ctx) return;
-
-    ctx.drawImage(videoRef.current, 0, 0);
-    const imageData = canvas.toDataURL('image/jpeg', 0.8);
+  // Procesar frame con el modelo
+  const processFrame = async () => {
+    if (!videoRef.current || !modelRef.current || state.status !== 'active') return;
 
     try {
       setState({ status: 'scanning' });
-      const response = await fetch(`${API_URL}/scan`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ image: imageData }),
-      });
-
-      if (!response.ok) throw new Error('Error en la respuesta del servidor');
       
-      const data = await response.json();
-      setResult(data);
+      // Realizar predicción con el modelo
+      const predictions = await modelRef.current.predict(videoRef.current);
+      
+      // Encontrar la predicción con mayor confianza
+      const bestPrediction = predictions.reduce((prev, current) => 
+        current.probability > prev.probability ? current : prev
+      );
+
+      // Solo actualizar si la confianza es mayor al 70%
+      if (bestPrediction.probability > 0.7) {
+        setResult({
+          productId: bestPrediction.className,
+          name: productClasses[bestPrediction.className] || bestPrediction.className,
+          confidence: bestPrediction.probability
+        });
+      }
+
       setState({ status: 'active' });
     } catch (error) {
+      console.error('Error al procesar frame:', error);
       setState({ 
         status: 'error', 
         error: 'Error al procesar la imagen. Intente nuevamente.' 
@@ -125,23 +151,11 @@ const ScannerPage: React.FC = () => {
     }
   };
 
-  // Efecto para inicializar la cámara
-  useEffect(() => {
-    // initializeCamera();
-
-    // Cleanup al desmontar
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, []);
-
   // Efecto para captura periódica
   useEffect(() => {
     if (state.status !== 'active') return;
 
-    const interval = setInterval(captureFrame, 2000);
+    const interval = setInterval(processFrame, 1000); // Procesar cada segundo
     return () => clearInterval(interval);
   }, [state.status]);
 
@@ -162,6 +176,13 @@ const ScannerPage: React.FC = () => {
           </button>
         </div>
 
+        {/* Estado de carga del modelo */}
+        {state.status === 'loading' && (
+          <div className="bg-blue-50 p-4 rounded-lg">
+            <p className="text-blue-700">Cargando modelo de reconocimiento...</p>
+          </div>
+        )}
+
         {/* Video Preview o Botón de inicio */}
         <div className="relative aspect-[4/3] bg-black rounded-lg overflow-hidden">
           {state.status === 'idle' ? (
@@ -169,7 +190,6 @@ const ScannerPage: React.FC = () => {
               <p className="text-white mb-4">
                 Para usar el escáner, necesitamos acceso a tu cámara
               </p>
-              {/* Safari iOS: Botón simple que llama directamente a initializeCamera */}
               <button
                 type="button"
                 onClick={initializeCamera}
@@ -179,11 +199,12 @@ const ScannerPage: React.FC = () => {
               </button>
             </div>
           ) : (
-            <>              <video
+            <>
+              <video
                 ref={videoRef}
                 playsInline
                 muted
-                controls={isIOS} // Mostrar controles en iOS puede ayudar con la reproducción
+                controls={isIOS}
                 className="absolute inset-0 w-full h-full object-cover"
               />
               
@@ -193,7 +214,7 @@ const ScannerPage: React.FC = () => {
                   <span className="text-sm font-medium">
                     {state.status === 'requesting' && 'Solicitando acceso a la cámara...'}
                     {state.status === 'active' && 'Cámara activa - Escaneando...'}
-                    {state.status === 'scanning' && 'Procesando imagen...'}
+                    {state.status === 'scanning' && 'Analizando producto...'}
                     {state.status === 'error' && state.error}
                   </span>
                   {(state.status === 'active' || state.status === 'scanning') && (
