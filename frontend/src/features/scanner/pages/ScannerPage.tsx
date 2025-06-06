@@ -1,72 +1,113 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as tf from '@tensorflow/tfjs';
-import * as tmImage from '@teachablemachine/image';
 
-const API_URL = import.meta.env.VITE_API_URL;
-const MODEL_URL = '/model/model.json';
-
-interface ScanResult {
-  productId: string;
-  name: string;
-  confidence: number;
-}
-
+// Tipos para el estado y resultado
 interface ScannerState {
-  status: 'idle' | 'loading' | 'requesting' | 'active' | 'error' | 'scanning';
+  status: 'idle' | 'loading' | 'active' | 'error' | 'scanning';
   error?: string;
 }
 
-// Mapeo de clases a nombres de productos
-const productClasses: Record<string, string> = {
-  'Class 1': 'Lisoform',
-  'Class 2': 'Lemon Stones'
-};
+interface PredictionResult {
+  className: string;
+  confidence: number;
+}
+
+const CLASSES = ['lisoform', 'lemon stones'];
+const MODEL_PATH = '/model/model.json';
+const PREDICTION_INTERVAL = 1000; // 1 segundo entre predicciones
 
 const ScannerPage: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const modelRef = useRef<tmImage.CustomMobileNet | null>(null);
+  const modelRef = useRef<tf.LayersModel | null>(null);
   const [state, setState] = useState<ScannerState>({ status: 'idle' });
-  const [result, setResult] = useState<ScanResult | null>(null);
+  const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [isIOS, setIsIOS] = useState<boolean>(false);
   const navigate = useNavigate();
-
-  // Cargar el modelo
-  const loadModel = async () => {
-    try {
-      setState({ status: 'loading' });
-      const model = await tmImage.load(MODEL_URL, '/model/metadata.json');
-      modelRef.current = model;
-      setState({ status: 'idle' });
-    } catch (error) {
-      console.error('Error al cargar el modelo:', error);
-      setState({ 
-        status: 'error', 
-        error: 'Error al cargar el modelo de reconocimiento.' 
-      });
-    }
-  };
 
   // Detectar iOS
   useEffect(() => {
     const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     setIsIOS(isIOSDevice);
-    
-    // Cargar el modelo al montar el componente
+  }, []);
+
+  // Cargar el modelo
+  useEffect(() => {
+    const loadModel = async () => {
+      try {
+        setState({ status: 'loading' });
+        // Cargar el modelo usando tf.loadLayersModel
+        modelRef.current = await tf.loadLayersModel(MODEL_PATH);
+        setState({ status: 'idle' });
+      } catch (error) {
+        console.error('Error loading model:', error);
+        setState({ 
+          status: 'error', 
+          error: 'No se pudo cargar el modelo. Por favor, recarga la página.' 
+        });
+      }
+    };
+
     loadModel();
 
     return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
+      // Limpiar el modelo al desmontar
+      if (modelRef.current) {
+        modelRef.current.dispose();
       }
     };
   }, []);
 
+  // Preprocesar imagen para el modelo
+  const preprocessImage = async (image: HTMLVideoElement | HTMLImageElement): Promise<tf.Tensor> => {
+    // Convertir la imagen a un tensor
+    const tensor = tf.browser.fromPixels(image)
+      .resizeNearestNeighbor([224, 224]) // Redimensionar a 224x224 (ajusta según tu modelo)
+      .toFloat()
+      .expandDims();
+    
+    // Normalizar valores a [-1, 1]
+    return tensor.div(127.5).sub(1);
+  };
+
+  // Realizar predicción
+  const predict = async (image: HTMLVideoElement | HTMLImageElement) => {
+    if (!modelRef.current) return;
+
+    try {
+      // Preprocesar imagen
+      const tensor = await preprocessImage(image);
+      
+      // Obtener predicción
+      const predictions = await modelRef.current.predict(tensor) as tf.Tensor;
+      const probabilities = await predictions.data();
+      
+      // Limpiar tensores
+      tensor.dispose();
+      predictions.dispose();
+
+      // Obtener el índice de la clase con mayor probabilidad
+      const maxIndex = probabilities.indexOf(Math.max(...Array.from(probabilities)));
+      
+      setPrediction({
+        className: CLASSES[maxIndex],
+        confidence: probabilities[maxIndex]
+      });
+    } catch (error) {
+      console.error('Error making prediction:', error);
+      setState({ 
+        status: 'error', 
+        error: 'Error al procesar la imagen' 
+      });
+    }
+  };
+
   // Inicializar la cámara
   const initializeCamera = async () => {
-    setState({ status: 'requesting' });
+    setState({ status: 'loading' });
+    
     try {
       const constraints: MediaStreamConstraints = {
         video: isIOS ? {
@@ -89,18 +130,14 @@ const ScannerPage: React.FC = () => {
         }
         
         videoRef.current.srcObject = stream;
-
         await new Promise<void>((resolve, reject) => {
           if (!videoRef.current) return reject();
-
+          
           const loadedMetadata = () => {
             videoRef.current?.removeEventListener('loadedmetadata', loadedMetadata);
             videoRef.current?.play()
               .then(() => resolve())
-              .catch((error) => {
-                console.error('Error al reproducir video:', error);
-                reject(error);
-              });
+              .catch(reject);
           };
 
           videoRef.current.addEventListener('loadedmetadata', loadedMetadata);
@@ -108,8 +145,8 @@ const ScannerPage: React.FC = () => {
 
         setState({ status: 'active' });
       }
-    } catch (error: any) {
-      console.error('Error al acceder a la cámara:', error);
+    } catch (error) {
+      console.error('Error accessing camera:', error);
       setState({ 
         status: 'error', 
         error: 'No se pudo acceder a la cámara. Por favor, verifica los permisos.' 
@@ -117,54 +154,34 @@ const ScannerPage: React.FC = () => {
     }
   };
 
-  // Procesar frame con el modelo
-  const processFrame = async () => {
-    if (!videoRef.current || !modelRef.current || state.status !== 'active') return;
-
-    try {
-      setState({ status: 'scanning' });
-      
-      // Realizar predicción con el modelo
-      const predictions = await modelRef.current.predict(videoRef.current);
-      
-      // Encontrar la predicción con mayor confianza
-      const bestPrediction = predictions.reduce((prev, current) => 
-        current.probability > prev.probability ? current : prev
-      );
-
-      // Solo actualizar si la confianza es mayor al 70%
-      if (bestPrediction.probability > 0.7) {
-        setResult({
-          productId: bestPrediction.className,
-          name: productClasses[bestPrediction.className] || bestPrediction.className,
-          confidence: bestPrediction.probability
-        });
-      }
-
-      setState({ status: 'active' });
-    } catch (error) {
-      console.error('Error al procesar frame:', error);
-      setState({ 
-        status: 'error', 
-        error: 'Error al procesar la imagen. Intente nuevamente.' 
-      });
-    }
-  };
-
-  // Efecto para captura periódica
+  // Efecto para predicciones periódicas
   useEffect(() => {
-    if (state.status !== 'active') return;
+    if (state.status !== 'active' || !videoRef.current) return;
 
-    const interval = setInterval(processFrame, 1000); // Procesar cada segundo
+    const interval = setInterval(() => {
+      if (videoRef.current && modelRef.current) {
+        predict(videoRef.current);
+      }
+    }, PREDICTION_INTERVAL);
+
     return () => clearInterval(interval);
   }, [state.status]);
+
+  // Cleanup al desmontar
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-100 p-4">
       <div className="max-w-md mx-auto space-y-4">
         {/* Header */}
         <div className="flex items-center justify-between bg-white p-4 rounded-lg shadow-sm">
-          <h1 className="text-xl font-semibold text-gray-900">Escanear Producto</h1>
+          <h1 className="text-xl font-semibold text-gray-900">Escáner de Productos</h1>
           <button 
             onClick={() => navigate(-1)}
             className="p-2 text-gray-600 hover:text-gray-900"
@@ -176,14 +193,7 @@ const ScannerPage: React.FC = () => {
           </button>
         </div>
 
-        {/* Estado de carga del modelo */}
-        {state.status === 'loading' && (
-          <div className="bg-blue-50 p-4 rounded-lg">
-            <p className="text-blue-700">Cargando modelo de reconocimiento...</p>
-          </div>
-        )}
-
-        {/* Video Preview o Botón de inicio */}
+        {/* Video Preview */}
         <div className="relative aspect-[4/3] bg-black rounded-lg overflow-hidden">
           {state.status === 'idle' ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
@@ -212,12 +222,11 @@ const ScannerPage: React.FC = () => {
               <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/70 to-transparent">
                 <div className="flex items-center justify-between text-white">
                   <span className="text-sm font-medium">
-                    {state.status === 'requesting' && 'Solicitando acceso a la cámara...'}
-                    {state.status === 'active' && 'Cámara activa - Escaneando...'}
-                    {state.status === 'scanning' && 'Analizando producto...'}
+                    {state.status === 'loading' && 'Cargando...'}
+                    {state.status === 'active' && 'Escaneando...'}
                     {state.status === 'error' && state.error}
                   </span>
-                  {(state.status === 'active' || state.status === 'scanning') && (
+                  {state.status === 'active' && (
                     <div className="animate-pulse w-3 h-3 rounded-full bg-green-500" />
                   )}
                 </div>
@@ -226,18 +235,18 @@ const ScannerPage: React.FC = () => {
           )}
         </div>
 
-        {/* Resultado */}
-        {result && (
+        {/* Resultado de la predicción */}
+        {prediction && (
           <div className="bg-white p-4 rounded-lg shadow-sm">
             <h2 className="text-lg font-medium text-gray-900 mb-2">
               Producto Detectado
             </h2>
             <div className="space-y-2">
               <p className="text-sm text-gray-600">
-                Nombre: <span className="font-medium text-gray-900">{result.name}</span>
+                Producto: <span className="font-medium text-gray-900">{prediction.className}</span>
               </p>
               <p className="text-sm text-gray-600">
-                Confianza: <span className="font-medium text-gray-900">{(result.confidence * 100).toFixed(1)}%</span>
+                Confianza: <span className="font-medium text-gray-900">{(prediction.confidence * 100).toFixed(1)}%</span>
               </p>
             </div>
           </div>
@@ -249,7 +258,7 @@ const ScannerPage: React.FC = () => {
             <button
               onClick={() => {
                 setState({ status: 'idle' });
-                setResult(null);
+                setPrediction(null);
               }}
               className="mt-4 text-blue-600 hover:text-blue-700 font-medium"
             >
@@ -263,3 +272,14 @@ const ScannerPage: React.FC = () => {
 };
 
 export default ScannerPage;
+
+/* 
+Cambios realizados:
+1. Eliminada la dependencia de @teachablemachine/image
+2. Implementada carga del modelo usando tf.loadLayersModel
+3. Agregado preprocesamiento de imágenes usando operaciones de tensor
+4. Implementada predicción directa usando el modelo de TensorFlow.js
+5. Agregada limpieza de tensores para evitar memory leaks
+6. Actualizada la interfaz para mostrar las clases específicas (lisoform y lemon stones)
+7. Mantenida la compatibilidad con iOS y manejo de permisos de cámara
+*/
