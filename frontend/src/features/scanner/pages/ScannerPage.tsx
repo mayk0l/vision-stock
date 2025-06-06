@@ -29,26 +29,30 @@ const ScannerPage: React.FC = () => {
 
   // Inicializar la cámara
   const initializeCamera = async () => {
-    setState({ status: 'requesting' });
-    try {
-      // Safari iOS: Usar constraints simples, solo especificar facingMode
+    setState({ status: 'requesting' });    try {
+      // Constraints específicos basados en el dispositivo
       const constraints: MediaStreamConstraints = {
-        video: {
+        video: isIOS ? {
+          // iOS: mantener constraints simples
           facingMode: 'environment'
+        } : {
+          // Otros navegadores: podemos usar más opciones
+          facingMode: 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
         },
         audio: false
       };
 
-      // Safari iOS: Obtener stream directamente sin verificación previa de permisos
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
 
       if (videoRef.current) {
-        // Safari iOS: Configurar video antes de asignar el stream
-        videoRef.current.setAttribute('playsinline', ''); // Sin valor para iOS
-        videoRef.current.setAttribute('muted', '');
-        videoRef.current.setAttribute('autoplay', '');
-        videoRef.current.muted = true; // Asegurar muted para autoplay
+        // En iOS, configurar los atributos antes del stream es crucial
+        if (isIOS) {
+          videoRef.current.setAttribute('playsinline', '');
+          videoRef.current.setAttribute('webkit-playsinline', 'true');
+        }
         
         // Safari iOS: Asignar stream después de configurar atributos
         videoRef.current.srcObject = stream;
@@ -173,11 +177,11 @@ const ScannerPage: React.FC = () => {
               </button>
             </div>
           ) : (
-            <>
-              {/* Safari iOS: Video element con playsinline sin valor */}
-              <video
+            <>              <video
                 ref={videoRef}
                 playsInline
+                muted
+                controls={isIOS} // Mostrar controles en iOS puede ayudar con la reproducción
                 className="absolute inset-0 w-full h-full object-cover"
               />
               
