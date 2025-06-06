@@ -1,8 +1,11 @@
-import { BaseEntity } from '../models/types';
-import { IBaseRepository } from '../repositories/base.repository';
+// This file is a template and is currently not in use
+// To be implemented when base service functionality is needed
 
-export class BaseService<T extends BaseEntity> {
-  constructor(private repository: IBaseRepository<T>) {}
+import { BaseEntity } from '../models/types';
+
+/* Base service template 
+export abstract class BaseService<T extends BaseEntity> {
+  constructor(protected repository: any) {}
 
   async findAll(): Promise<T[]> {
     return this.repository.findAll();
@@ -24,3 +27,6 @@ export class BaseService<T extends BaseEntity> {
     return this.repository.delete(id);
   }
 }
+*/
+
+export {};

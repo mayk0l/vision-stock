@@ -1,27 +1,22 @@
+// This file is a template and is currently not in use
+// To be implemented when authentication is needed
+
 import { Request, Response, NextFunction } from 'express';
-import { config } from '../config';
 
-export interface AuthRequest extends Request {
-  user?: {
-    id: number;
-    email: string;
-  };
-}
-
+/* Auth middleware template
 export const authMiddleware = async (
-  req: AuthRequest,
-  res: Response,
+  req: Request,
+  res: Response, 
   next: NextFunction
 ) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ message: 'No token provided' });
-    }
-    
-    // To be implemented
+    // Verify token
+    // Add user to request
     next();
   } catch (error) {
     res.status(401).json({ message: 'Invalid token' });
   }
 };
+*/
+
+export {};

@@ -1,11 +1,20 @@
+// This file is a template and is currently not in use
+// To be implemented later when needed
 import { Router } from 'express';
-import { AuthRequest } from '../middlewares/auth.middleware';
 
-const router = Router();
+/* Example controller template
+export class ExampleController {
+  router: Router;
 
-// Example endpoint
-router.get('/', (req: AuthRequest, res) => {
-  res.json({ message: 'Controller endpoint' });
-});
+  constructor() {
+    this.router = Router();
+    this.initializeRoutes();
+  }
 
-export default router;
+  private initializeRoutes() {
+    // Define routes here
+  }
+}
+*/
+
+export {};

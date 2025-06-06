@@ -1,9 +1,16 @@
+// This file is a template and is currently not in use
+// To be implemented when database integration is needed
+
 import { BaseEntity } from '../models/types';
 
-export interface IBaseRepository<T extends BaseEntity> {
-  findAll(): Promise<T[]>;
-  findById(id: number): Promise<T | null>;
-  create(data: Omit<T, 'id' | 'createdAt' | 'updatedAt'>): Promise<T>;
-  update(id: number, data: Partial<T>): Promise<T>;
-  delete(id: number): Promise<void>;
+/* Base repository template
+export abstract class BaseRepository<T extends BaseEntity> {
+  abstract findAll(): Promise<T[]>;
+  abstract findById(id: number): Promise<T | null>;
+  abstract create(data: Omit<T, 'id' | 'createdAt' | 'updatedAt'>): Promise<T>;
+  abstract update(id: number, data: Partial<T>): Promise<T>;
+  abstract delete(id: number): Promise<void>;
 }
+*/
+
+export {};
